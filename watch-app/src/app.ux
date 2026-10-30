@@ -1,0 +1,10 @@
+<script>
+export default {
+  onCreate() {
+    console.log('SwipeSync app created')
+  },
+  onDestroy() {
+    console.log('SwipeSync app destroyed')
+  }
+}
+</script>

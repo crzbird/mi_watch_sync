@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.swipesync.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.swipesync.app"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        // 与手表端 RPK 签名一致（interconnect 要求 APK 与 RPK 包名+签名一致）
+        release {
+            storeFile rootProject.file('keystore/swipesync.jks')
+            storePassword 'swipesync'
+            keyAlias 'swipesync'
+            keyPassword 'swipesync'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // 小米穿戴第三方 APP 能力开放 SDK（XMS Wearable 1.4）—— AAR 自包含无传递依赖
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    // SDK 接口签名使用的空注解（纯 Java 小 jar，约 11KB）
+    implementation 'androidx.annotation:annotation:1.6.0'
+}

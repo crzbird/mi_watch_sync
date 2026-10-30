@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">滑动同步</string>
+    <string name="a11y_label">滑动同步手势注入</string>
+    <string name="a11y_desc">滑动同步需要此服务在手机屏幕上执行滑动手势，以将手表上的滑动操作同步到手机。此服务不读取屏幕内容。</string>
+    <string name="notif_channel">同步服务</string>
+    <string name="notif_title">滑动同步运行中</string>
+</resources>

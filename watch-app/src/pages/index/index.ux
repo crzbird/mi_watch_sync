@@ -1,0 +1,368 @@
+<template>
+  <div class="page">
+    <!-- 顶部状态栏 -->
+    <div class="statusbar">
+      <text class="dot {{ connOk ? 'dot-on' : 'dot-off' }}">●</text>
+      <text class="title">滑动同步</text>
+      <text class="conn {{ connOk ? 'conn-on' : 'conn-off' }}">{{ connText }}</text>
+      <text class="exit" @click="exitApp">✕</text>
+    </div>
+
+    <!-- 触控板区域：上下左右滑动 → 同步到手机 -->
+    <div
+      class="pad"
+      @touchstart="onTouchStart"
+      @touchmove="onTouchMove"
+      @touchend="onTouchEnd"
+    >
+      <div class="pad-inner">
+        <text class="glyph">{{ lastGlyph }}</text>
+        <text class="pad-tip">{{ lastInfo }}</text>
+      </div>
+    </div>
+
+    <!-- 底部：模式切换 -->
+    <div class="mode-btn" @click="toggleMode">
+      <text class="mode-text">模式：{{ modeText }}</text>
+    </div>
+    <text class="foot-tip">在触控区上下左右滑动 · 右上角 ✕ 退出</text>
+  </div>
+</template>
+
+<style>
+@import '../../style/comm.css';
+
+.page {
+  width: 432px;
+  height: 514px;
+  flex-direction: column;
+  align-items: center;
+  background-color: #000000;
+  padding-top: 10px;
+}
+.statusbar {
+  width: 376px;
+  height: 38px;
+  flex-direction: row;
+  align-items: center;
+}
+.dot {
+  font-size: 22px;
+  margin-right: 8px;
+}
+.dot-on {
+  color: #34c759;
+}
+.dot-off {
+  color: #ff453a;
+}
+.title {
+  font-size: 26px;
+  color: #f2f2f7;
+  font-weight: bold;
+}
+.conn {
+  font-size: 22px;
+  margin-left: 14px;
+}
+.conn-on {
+  color: #34c759;
+}
+.conn-off {
+  color: #ff9f0a;
+}
+.exit {
+  font-size: 28px;
+  color: #8e8e93;
+  margin-left: 18px;
+}
+.pad {
+  width: 376px;
+  height: 348px;
+  margin-top: 8px;
+  border-width: 2px;
+  border-color: #2c2c33;
+  border-radius: 28px;
+  background-color: #101014;
+  justify-content: center;
+  align-items: center;
+}
+.pad-inner {
+  flex-direction: column;
+  align-items: center;
+}
+.glyph {
+  font-size: 130px;
+  color: #4c8dff;
+}
+.pad-tip {
+  font-size: 22px;
+  color: #8e8e93;
+  margin-top: 6px;
+}
+.mode-btn {
+  width: 376px;
+  height: 54px;
+  margin-top: 10px;
+  border-radius: 27px;
+  background-color: #1c1c22;
+  justify-content: center;
+  align-items: center;
+}
+.mode-text {
+  font-size: 26px;
+  color: #4c8dff;
+}
+.foot-tip {
+  font-size: 20px;
+  color: #63636a;
+  margin-top: 4px;
+}
+</style>
+
+<script>
+import interconnect from '@system.interconnect'
+import vibrator from '@system.vibrator'
+import app from '@system.app'
+
+const GLYPH = { up: '↑', down: '↓', left: '←', right: '→' }
+const DIR_CN = { up: '上', down: '下', left: '左', right: '右' }
+
+// 手势识别参数（design px，432 宽设计稿）
+const TAP_MIN_DIST = 34 // 离散滑动最小位移
+const AXIS_RATIO = 1.1 // 主轴/副轴比值，保证方向明确
+const CONT_STEP = 52 // 连续模式单步位移
+const CONT_MIN_INTERVAL = 70 // 连续模式两步最小间隔 ms
+
+export default {
+  private: {
+    connOk: false,
+    connText: '连接中…',
+    mode: 'discrete',
+    modeText: '单次滑动',
+    lastGlyph: '',
+    lastInfo: '上下左右滑动试试',
+    sent: 0,
+    failed: 0,
+    seq: 0
+  },
+
+  onInit() {
+    this.setupConn()
+  },
+
+  onReady() {
+    this.refreshReady()
+  },
+
+  onDestroy() {
+    if (this._timer) {
+      clearInterval(this._timer)
+      this._timer = null
+    }
+  },
+
+  onBackPress() {
+    // 拦截系统"右滑返回"手势：右滑需要同步给手机。
+    // 退出应用请点右上角 ✕ 或使用系统表冠/上滑回桌面。
+    return true
+  },
+
+  /* ---------------- interconnect 连接管理 ---------------- */
+
+  setupConn() {
+    const conn = interconnect.instance()
+    this._conn = conn
+
+    conn.onopen = (d) => {
+      this.connOk = true
+      this.connText = '已连接'
+      this.lastInfo = d && d.isReconnected ? '连接已恢复' : '连接已建立'
+    }
+    conn.onclose = () => {
+      this.connOk = false
+      this.connText = '已断开'
+    }
+    conn.onerror = (d) => {
+      this.connOk = false
+      const code = d && d.code
+      if (code === 1001) {
+        this.connText = '手机端未安装'
+      } else {
+        this.connText = '连接异常'
+      }
+    }
+    conn.onmessage = () => {
+      // 预留：手机端回传消息
+    }
+
+    this._timer = setInterval(() => {
+      this.refreshReady()
+    }, 3000)
+  },
+
+  refreshReady() {
+    if (!this._conn) {
+      return
+    }
+    this._conn.getReadyState({
+      success: (res) => {
+        if (res.status === 1) {
+          this.connOk = true
+          this.connText = '已连接'
+        } else {
+          this.connOk = false
+          this.connText = '未连接'
+        }
+      },
+      fail: () => {}
+    })
+  },
+
+  /* ---------------- 交互 ---------------- */
+
+  toggleMode() {
+    if (this.mode === 'discrete') {
+      this.mode = 'continuous'
+      this.modeText = '连续滑动'
+    } else {
+      this.mode = 'discrete'
+      this.modeText = '单次滑动'
+    }
+    this.shortVibrate()
+    this.lastGlyph = ''
+    this.lastInfo = '已切换：' + this.modeText
+  },
+
+  exitApp() {
+    try {
+      app.exit()
+    } catch (e) {
+      console.log('exit failed: ' + e)
+    }
+  },
+
+  onTouchStart(e) {
+    const t = e.touches && e.touches[0]
+    if (!t) {
+      return
+    }
+    this._x0 = t.clientX
+    this._y0 = t.clientY
+    this._lx = t.clientX
+    this._ly = t.clientY
+    this._lastEmit = 0
+  },
+
+  onTouchMove(e) {
+    if (this.mode !== 'continuous') {
+      return
+    }
+    const t = e.changedTouches && e.changedTouches[0]
+    if (!t) {
+      return
+    }
+    const dx = t.clientX - this._lx
+    const dy = t.clientY - this._ly
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    if (Math.max(adx, ady) < CONT_STEP) {
+      return
+    }
+    const now = Date.now()
+    if (now - this._lastEmit < CONT_MIN_INTERVAL) {
+      return
+    }
+    const dir = this.judgeDir(adx, ady, dx, dy)
+    if (!dir) {
+      return
+    }
+    this._lastEmit = now
+    this._lx = t.clientX
+    this._ly = t.clientY
+    this.emit(dir)
+  },
+
+  onTouchEnd(e) {
+    if (this.mode === 'continuous') {
+      return
+    }
+    const t = e.changedTouches && e.changedTouches[0]
+    if (!t) {
+      return
+    }
+    const dx = t.clientX - this._x0
+    const dy = t.clientY - this._y0
+    const adx = Math.abs(dx)
+    const ady = Math.abs(dy)
+    if (Math.max(adx, ady) < TAP_MIN_DIST) {
+      return
+    }
+    const dir = this.judgeDir(adx, ady, dx, dy)
+    if (dir) {
+      this.emit(dir)
+    }
+  },
+
+  judgeDir(adx, ady, dx, dy) {
+    if (adx >= ady * AXIS_RATIO) {
+      return dx > 0 ? 'right' : 'left'
+    }
+    if (ady >= adx * AXIS_RATIO) {
+      return dy > 0 ? 'down' : 'up'
+    }
+    return null
+  },
+
+  /* ---------------- 发送 ---------------- */
+
+  emit(dir) {
+    this.seq++
+    this.shortVibrate()
+    this.lastGlyph = GLYPH[dir]
+    this.lastInfo = '发送中：' + DIR_CN[dir]
+
+    const payload = JSON.stringify({
+      v: 1,
+      t: 'sw',
+      d: dir,
+      m: this.mode === 'continuous' ? 'c' : 'd',
+      s: this.seq,
+      ts: Date.now()
+    })
+
+    if (!this._conn) {
+      this.failed++
+      this.lastInfo = '发送失败：无连接'
+      return
+    }
+
+    this._conn.send({
+      data: payload,
+      success: () => {
+        this.sent++
+        this.lastInfo = '已同步：' + DIR_CN[dir]
+      },
+      fail: (d, c) => {
+        this.failed++
+        this.lastInfo = '发送失败(' + (c || '?') + ')'
+        this.connOk = false
+        this.connText = '未连接'
+        this.longVibrate()
+      }
+    })
+  },
+
+  shortVibrate() {
+    try {
+      vibrator.vibrate({ mode: 'short' })
+    } catch (e) {}
+  },
+
+  longVibrate() {
+    try {
+      vibrator.vibrate({ mode: 'long' })
+    } catch (e) {}
+  }
+}
+</script>
